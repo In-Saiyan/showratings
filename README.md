@@ -1,4 +1,4 @@
-#Basic command
+# Basic command
 
 do 
 `makepkg -i` or `makepkg -si` to install or build and install the package
