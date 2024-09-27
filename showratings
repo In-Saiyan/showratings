@@ -1,0 +1,239 @@
+#!/bin/bash
+
+# Config and ratings file paths
+CONFIG_DIR="$HOME/.config/rating"
+CONFIG_FILE="$CONFIG_DIR/rating.conf"
+RATINGS_FILE="$CONFIG_DIR/ratings.log"
+TIME_THRESHOLD=$((60 * 60 * 24 * 2))  # 2 days in seconds
+
+# Ensure config directory exists
+mkdir -p "$CONFIG_DIR"
+
+# Function to display help message
+show_help() {
+    echo "Usage: showratings.sh [OPTIONS]"
+    echo "Fetch your ratings for Codeforces, CodeChef, and LeetCode."
+    echo ""
+    echo "Options:"
+    echo "  -u, --update         Force update the ratings regardless of the 2-day limit"
+    echo "  -r, --remove [mode]  Remove 'accounts' or 'logs' (e.g., --remove accounts)"
+    echo "  -s, --setup          Enter setup mode to re-enter usernames for all platforms"
+    echo "  -n, --numbers-only   Only output the rating numbers for each platform"
+    echo "  -h, --help           Display this help message"
+    exit 0
+}
+
+# Function to reset and ask for usernames in setup mode
+setup_config() {
+    echo "Setting up configuration. Please provide your usernames for the following platforms."
+    echo -n > "$CONFIG_FILE"  # Clear the config file
+
+    current_time=$(date +%s)
+
+    read -p "Enter your Codeforces username (or leave blank to skip): " codeforces_username
+    if [[ -n "$codeforces_username" ]]; then
+        echo "Codeforces=$codeforces_username|$current_time" >> "$CONFIG_FILE"
+    fi
+
+    read -p "Enter your CodeChef username (or leave blank to skip): " codechef_username
+    if [[ -n "$codechef_username" ]]; then
+        echo "CodeChef=$codechef_username|$current_time" >> "$CONFIG_FILE"
+    fi
+
+    read -p "Enter your LeetCode username (or leave blank to skip): " leetcode_username
+    if [[ -n "$leetcode_username" ]]; then
+        echo "LeetCode=$leetcode_username|$current_time" >> "$CONFIG_FILE"
+    fi
+
+    echo "Configuration saved!"
+}
+
+# Function to check if config file exists and has at least one username
+check_config() {
+    if [[ ! -f "$CONFIG_FILE" || $(grep -c '=' "$CONFIG_FILE") -eq 0 ]]; then
+        echo "No usernames found in config file. Entering setup mode."
+        setup_config
+    fi
+}
+
+# Function to read a username and setup timestamp from the config file
+get_username_and_timestamp() {
+    local site="$1"
+    local entry=$(grep "^$site=" "$CONFIG_FILE" | cut -d '=' -f 2)
+    local username=$(echo "$entry" | cut -d '|' -f 1)
+    local timestamp=$(echo "$entry" | cut -d '|' -f 2)
+    echo "$username|$timestamp"
+}
+
+# Function to save the rating and timestamp
+save_rating() {
+    local site="$1"
+    local rating="$2"
+    echo "$site $rating $(date +%s)" >> "$RATINGS_FILE"
+}
+
+# Function to fetch old rating if it's within 2 days and username was not updated
+get_cached_rating() {
+    local site="$1"
+    local username_timestamp="$2"
+    local setup_timestamp=$(echo "$username_timestamp" | cut -d '|' -f 2)
+
+    if [[ -f "$RATINGS_FILE" ]]; then
+        last_entry=$(grep "^$site" "$RATINGS_FILE" | tail -n 1)
+        if [[ -n "$last_entry" ]]; then
+            timestamp=$(echo "$last_entry" | awk '{print $3}')
+            rating=$(echo "$last_entry" | awk '{print $2}')
+            current_time=$(date +%s)
+            elapsed_time=$((current_time - timestamp))
+            if ((elapsed_time < TIME_THRESHOLD)) && ((setup_timestamp <= timestamp)); then
+                echo "$rating"
+                return 0
+            fi
+        fi
+    fi
+    return 1  # No valid cached rating
+}
+
+# Fetch Codeforces rating
+get_codeforces_rating() {
+    local username_timestamp="$1"
+    local username=$(echo "$username_timestamp" | cut -d '|' -f 1)
+    local cached_rating
+
+    cached_rating=$(get_cached_rating "Codeforces" "$username_timestamp")
+    if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$cached_rating"
+        else
+            echo "Codeforces Rating (cached): $cached_rating"
+        fi
+        return
+    fi
+
+    [[ -z "$username" ]] && return  # Skip if no username
+    response=$(curl -s "https://codeforces.com/api/user.info?handles=$username")
+    status=$(echo "$response" | jq -r '.status')
+    if [[ "$status" == "OK" ]]; then
+        rating=$(echo "$response" | jq -r '.result[0].rating')
+        max_rating=$(echo "$response" | jq -r '.result[0].maxRating')
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$rating"
+        else
+            echo "Codeforces Rating: $rating (Max: $max_rating)"
+        fi
+        save_rating "Codeforces" "$rating"
+    fi
+}
+
+# Fetch CodeChef rating
+get_codechef_rating() {
+    local username_timestamp="$1"
+    local username=$(echo "$username_timestamp" | cut -d '|' -f 1)
+    local cached_rating
+
+    cached_rating=$(get_cached_rating "CodeChef" "$username_timestamp")
+    if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$cached_rating"
+        else
+            echo "CodeChef Rating (cached): $cached_rating"
+        fi
+        return
+    fi
+
+    [[ -z "$username" ]] && return  # Skip if no username
+    response=$(curl -s "https://www.codechef.com/users/$username")
+    rating=$(echo "$response" | grep -oP '(?<=<div class="rating-number">)\d+')
+    if [[ -n "$rating" ]]; then
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$rating"
+        else
+            echo "CodeChef Rating: $rating"
+        fi
+        save_rating "CodeChef" "$rating"
+    fi
+}
+
+# Fetch LeetCode rating
+get_leetcode_rating() {
+    local username_timestamp="$1"
+    local username=$(echo "$username_timestamp" | cut -d '|' -f 1)
+    local cached_rating
+
+    cached_rating=$(get_cached_rating "LeetCode" "$username_timestamp")
+    if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$cached_rating"
+        else
+            echo "LeetCode Rating (cached): $cached_rating"
+        fi
+        return
+    fi
+
+    [[ -z "$username" ]] && return  # Skip if no username
+    response=$(curl -s "https://leetcode.com/$username/")
+    rating=$(echo "$response" | grep -oP '(?<=<span class="text-[24px] font-medium text-label-1 dark:text-dark-label-1">)\d+')
+    if [[ -n "$rating" ]]; then
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$rating"
+        else
+            echo "LeetCode Rating: $rating"
+        fi
+        save_rating "LeetCode" "$rating"
+    fi
+}
+
+# Remove old logs or account names
+remove_entries() {
+    local mode="$1"
+    if [[ "$mode" == "accounts" ]]; then
+        echo "Removing account entries..."
+        > "$CONFIG_FILE"
+        echo "All accounts have been removed."
+    elif [[ "$mode" == "logs" ]]; then
+        echo "Removing old logs..."
+        > "$RATINGS_FILE"
+        echo "All logs have been removed."
+    else
+        echo "Invalid mode. Use 'accounts' or 'logs'."
+    fi
+}
+
+# Process command-line arguments
+FORCE_UPDATE=false
+REMOVE_MODE=""
+SETUP_MODE=false
+NUMBERS_ONLY=false
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -u|--update) FORCE_UPDATE=true ;;
+        -r|--remove) REMOVE_MODE="$2"; shift ;;
+        -s|--setup) SETUP_MODE=true ;;
+        -n|--numbers-only) NUMBERS_ONLY=true ;;
+        -h|--help) show_help ;;
+        *) echo "Unknown parameter passed: $1"; show_help ;;
+    esac
+    shift
+done
+
+# Enter setup mode if requested
+if [[ "$SETUP_MODE" == true ]]; then
+    setup_config
+    exit 0
+fi
+
+# Remove accounts or logs if requested
+if [[ -n "$REMOVE_MODE" ]]; then
+    remove_entries "$REMOVE_MODE"
+    exit 0
+fi
+
+# Main script logic
+check_config
+
+# Fetch ratings
+get_codeforces_rating "$(get_username_and_timestamp "Codeforces")"
+get_codechef_rating "$(get_username_and_timestamp "CodeChef")"
+get_leetcode_rating "$(get_username_and_timestamp "LeetCode")"
+``
