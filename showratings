@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# showratings - Rating fetcher for competitive programming platforms
+# Version: 1.1.0
+
 # Config and ratings file paths
 CONFIG_DIR="$HOME/.config/rating"
 CONFIG_FILE="$CONFIG_DIR/rating.conf"
@@ -11,15 +14,31 @@ mkdir -p "$CONFIG_DIR"
 
 # Function to display help message
 show_help() {
+    echo "showratings v1.1.0 - Rating fetcher for competitive programming platforms"
     echo "Usage: showratings.sh [OPTIONS]"
-    echo "Fetch your ratings for Codeforces, CodeChef, and LeetCode."
+    echo "Fetch your ratings for Codeforces, CodeChef, LeetCode, and GitHub stats."
     echo ""
     echo "Options:"
     echo "  -u, --update         Force update the ratings regardless of the 2-day limit"
     echo "  -r, --remove [mode]  Remove 'accounts' or 'logs' (e.g., --remove accounts)"
     echo "  -s, --setup          Enter setup mode to re-enter usernames for all platforms"
     echo "  -n, --numbers-only   Only output the rating numbers for each platform"
+    echo "  -ol, --one-line      Display stats in compact one-line format"
+    echo "  -f, --full           Show full GitHub stats (including following and starred)"
+    echo "  -cf, --codeforces    Show only Codeforces rating"
+    echo "  -cc, --codechef      Show only CodeChef rating"
+    echo "  -lc, --leetcode      Show only LeetCode rating"
+    echo "  -gh, --github        Show only GitHub stats"
+    echo "  -v, --version        Show version information"
     echo "  -h, --help           Display this help message"
+    exit 0
+}
+
+# Function to display version information
+show_version() {
+    echo "showratings v1.1.0"
+    echo "Rating fetcher for Codeforces, CodeChef, LeetCode, and GitHub"
+    echo "Copyright (c) 2025 - Licensed under MIT"
     exit 0
 }
 
@@ -43,6 +62,11 @@ setup_config() {
     read -p "Enter your LeetCode username (or leave blank to skip): " leetcode_username
     if [[ -n "$leetcode_username" ]]; then
         echo "LeetCode=$leetcode_username|$current_time" >> "$CONFIG_FILE"
+    fi
+
+    read -p "Enter your GitHub username (or leave blank to skip): " github_username
+    if [[ -n "$github_username" ]]; then
+        echo "GitHub=$github_username|$current_time" >> "$CONFIG_FILE"
     fi
 
     echo "Configuration saved!"
@@ -104,6 +128,8 @@ get_codeforces_rating() {
     if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
         if [[ "$NUMBERS_ONLY" == true ]]; then
             echo "$cached_rating"
+        elif [[ "$ONE_LINE" == true ]]; then
+            echo "$cached_rating"
         else
             echo "Codeforces Rating (cached): $cached_rating"
         fi
@@ -118,6 +144,8 @@ get_codeforces_rating() {
         max_rating=$(echo "$response" | jq -r '.result[0].maxRating')
         if [[ "$NUMBERS_ONLY" == true ]]; then
             echo "$rating"
+        elif [[ "$ONE_LINE" == true ]]; then
+            echo "$rating (Max: $max_rating)"
         else
             echo "Codeforces Rating: $rating (Max: $max_rating)"
         fi
@@ -135,6 +163,8 @@ get_codechef_rating() {
     if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
         if [[ "$NUMBERS_ONLY" == true ]]; then
             echo "$cached_rating"
+        elif [[ "$ONE_LINE" == true ]]; then
+            echo "$cached_rating"
         else
             echo "CodeChef Rating (cached): $cached_rating"
         fi
@@ -146,6 +176,8 @@ get_codechef_rating() {
     rating=$(echo "$response" | grep -oP '(?<=<div class="rating-number">)\d+')
     if [[ -n "$rating" ]]; then
         if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$rating"
+        elif [[ "$ONE_LINE" == true ]]; then
             echo "$rating"
         else
             echo "CodeChef Rating: $rating"
@@ -164,6 +196,8 @@ get_leetcode_rating() {
     if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
         if [[ "$NUMBERS_ONLY" == true ]]; then
             echo "$cached_rating"
+        elif [[ "$ONE_LINE" == true ]]; then
+            echo "$cached_rating"
         else
             echo "LeetCode Rating (cached): $cached_rating"
         fi
@@ -176,10 +210,104 @@ get_leetcode_rating() {
     if [[ -n "$rating" ]]; then
         if [[ "$NUMBERS_ONLY" == true ]]; then
             echo "$rating"
+        elif [[ "$ONE_LINE" == true ]]; then
+            echo "$rating"
         else
             echo "LeetCode Rating: $rating"
         fi
         save_rating "LeetCode" "$rating"
+    fi
+}
+
+# Fetch GitHub stats
+get_github_stats() {
+    local username_timestamp="$1"
+    local username=$(echo "$username_timestamp" | cut -d '|' -f 1)
+    local cached_rating
+
+    cached_rating=$(get_cached_rating "GitHub" "$username_timestamp")
+    if [[ -n "$cached_rating" && "$FORCE_UPDATE" == false ]]; then
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$cached_rating"
+        elif [[ "$ONE_LINE" == true ]]; then
+            # Parse cached stats for oneline display
+            repos=$(echo "$cached_rating" | grep -oP 'repos:\K\d+')
+            followers=$(echo "$cached_rating" | grep -oP 'followers:\K\d+')
+            following=$(echo "$cached_rating" | grep -oP 'following:\K\d+')
+            stars=$(echo "$cached_rating" | grep -oP 'stars:\K\d+')
+            if [[ "$FULL" == true ]]; then
+                echo "$repos repos, $followers followers, $following following, $stars starred"
+            else
+                echo "$repos repos, $followers followers"
+            fi
+        else
+            # Parse cached stats for better display
+            repos=$(echo "$cached_rating" | grep -oP 'repos:\K\d+')
+            followers=$(echo "$cached_rating" | grep -oP 'followers:\K\d+')
+            following=$(echo "$cached_rating" | grep -oP 'following:\K\d+')
+            stars=$(echo "$cached_rating" | grep -oP 'stars:\K\d+')
+            echo "GitHub Stats (cached):"
+            echo "  Repositories: $repos"
+            echo "  Followers: $followers"
+            if [[ "$FULL" == true ]]; then
+                echo "  Following: $following"
+                echo "  Starred: $stars"
+            fi
+        fi
+        return
+    fi
+
+    [[ -z "$username" ]] && return  # Skip if no username
+    
+    # Fetch user info from GitHub API
+    response=$(curl -s "https://api.github.com/users/$username")
+    
+    # Check if user exists
+    if echo "$response" | grep -q '"message": "Not Found"'; then
+        echo "GitHub user '$username' not found"
+        return
+    fi
+    
+    # Extract basic stats from user info
+    public_repos=$(echo "$response" | jq -r '.public_repos // 0' 2>/dev/null || echo "0")
+    followers=$(echo "$response" | jq -r '.followers // 0' 2>/dev/null || echo "0")
+    following=$(echo "$response" | jq -r '.following // 0' 2>/dev/null || echo "0")
+    
+    # Fallback if jq is not available
+    if [[ "$public_repos" == "0" && "$followers" == "0" && "$following" == "0" ]]; then
+        public_repos=$(echo "$response" | grep -oP '(?<="public_repos":)\s*\d+' | tr -d ' ' || echo "0")
+        followers=$(echo "$response" | grep -oP '(?<="followers":)\s*\d+' | tr -d ' ' || echo "0")
+        following=$(echo "$response" | grep -oP '(?<="following":)\s*\d+' | tr -d ' ' || echo "0")
+    fi
+    
+    # Get starred count - simpler approach
+    starred_count=$(curl -s "https://api.github.com/users/$username/starred" | grep -o '"full_name"' | wc -l)
+    stars=${starred_count:-0}
+    
+    # Format the stats
+    if [[ -n "$public_repos" ]]; then
+        stats_string="repos:$public_repos|followers:$followers|following:$following|stars:$stars"
+        
+        if [[ "$NUMBERS_ONLY" == true ]]; then
+            echo "$stats_string"
+        elif [[ "$ONE_LINE" == true ]]; then
+            if [[ "$FULL" == true ]]; then
+                echo "$public_repos repos, $followers followers, $following following, $stars starred"
+            else
+                echo "$public_repos repos, $followers followers"
+            fi
+        else
+            echo "GitHub Stats:"
+            echo "  Repositories: $public_repos"
+            echo "  Followers: $followers"
+            if [[ "$FULL" == true ]]; then
+                echo "  Following: $following"
+                echo "  Starred: $stars"
+            fi
+        fi
+        save_rating "GitHub" "$stats_string"
+    else
+        echo "Failed to fetch GitHub stats for '$username'"
     fi
 }
 
@@ -204,6 +332,13 @@ FORCE_UPDATE=false
 REMOVE_MODE=""
 SETUP_MODE=false
 NUMBERS_ONLY=false
+ONE_LINE=false
+FULL=false
+SHOW_CODEFORCES=false
+SHOW_CODECHEF=false
+SHOW_LEETCODE=false
+SHOW_GITHUB=false
+SHOW_ALL=true
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -211,6 +346,13 @@ while [[ "$#" -gt 0 ]]; do
         -r|--remove) REMOVE_MODE="$2"; shift ;;
         -s|--setup) SETUP_MODE=true ;;
         -n|--numbers-only) NUMBERS_ONLY=true ;;
+        -ol|--one-line) ONE_LINE=true ;;
+        -f|--full) FULL=true ;;
+        -cf|--codeforces) SHOW_CODEFORCES=true; SHOW_ALL=false ;;
+        -cc|--codechef) SHOW_CODECHEF=true; SHOW_ALL=false ;;
+        -lc|--leetcode) SHOW_LEETCODE=true; SHOW_ALL=false ;;
+        -gh|--github) SHOW_GITHUB=true; SHOW_ALL=false ;;
+        -v|--version) show_version ;;
         -h|--help) show_help ;;
         *) echo "Unknown parameter passed: $1"; show_help ;;
     esac
@@ -232,8 +374,24 @@ fi
 # Main script logic
 check_config
 
-# Fetch ratings
-get_codeforces_rating "$(get_username_and_timestamp "Codeforces")"
-get_codechef_rating "$(get_username_and_timestamp "CodeChef")"
-get_leetcode_rating "$(get_username_and_timestamp "LeetCode")"
+# Fetch ratings based on user selection
+if [[ "$SHOW_ALL" == true ]]; then
+    get_codeforces_rating "$(get_username_and_timestamp "Codeforces")"
+    get_codechef_rating "$(get_username_and_timestamp "CodeChef")"
+    get_leetcode_rating "$(get_username_and_timestamp "LeetCode")"
+    get_github_stats "$(get_username_and_timestamp "GitHub")"
+else
+    if [[ "$SHOW_CODEFORCES" == true ]]; then
+        get_codeforces_rating "$(get_username_and_timestamp "Codeforces")"
+    fi
+    if [[ "$SHOW_CODECHEF" == true ]]; then
+        get_codechef_rating "$(get_username_and_timestamp "CodeChef")"
+    fi
+    if [[ "$SHOW_LEETCODE" == true ]]; then
+        get_leetcode_rating "$(get_username_and_timestamp "LeetCode")"
+    fi
+    if [[ "$SHOW_GITHUB" == true ]]; then
+        get_github_stats "$(get_username_and_timestamp "GitHub")"
+    fi
+fi
 ``
