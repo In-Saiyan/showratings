@@ -204,7 +204,7 @@ get_leetcode_rating() {
         return
     fi
 
-    [[ -z "$username" ]] && return  # Skip if no username
+    [[ -z "$username" ]] && return  # Skip if no username # TODO remove this section not useful for now
     response=$(curl -s "https://leetcode.com/$username/")
     rating=$(echo "$response" | grep -oP '(?<=<span class="text-[24px] font-medium text-label-1 dark:text-dark-label-1">)\d+')
     if [[ -n "$rating" ]]; then
